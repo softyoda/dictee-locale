@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>DicteeLocale</AssemblyName>
+    <ApplicationIcon>Assets/dictee.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup><PackageReference Include="NAudio" Version="2.2.1" /></ItemGroup>
+  <ItemGroup><Content Include="Assets/dictee.ico" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Strings.en.json" LogicalName="DicteeLocale.Strings.en.json" WithCulture="false" /></ItemGroup>
+</Project>

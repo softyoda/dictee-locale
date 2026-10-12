@@ -1,0 +1,21 @@
+﻿name: Bug report
+description: Report a reproducible Windows dictation problem
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include steps and expected behavior. Use synthetic text; do not upload private dictations.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Windows version and app version
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: GPU and destination application
+  - type: textarea
+    attributes:
+      label: Error message
+      description: Remove personal paths and tokens.
