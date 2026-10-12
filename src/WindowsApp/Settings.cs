@@ -4,6 +4,8 @@ using System.Text.Json;
 namespace DicteeLocale;
 public sealed class Settings
 {
+    public bool parsecEnabled {get;set;}=false;
+    public string parsecKeyboardLayout {get;set;}="local";
     public string interfaceLanguage {get;set;}=System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName=="fr"?"fr":"en";
     public int hotkeyModifiers {get;set;}=7;
     public int hotkeyKey {get;set;}=68;

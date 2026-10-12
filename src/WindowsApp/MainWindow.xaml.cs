@@ -67,6 +67,7 @@ public partial class MainWindow : Window
             Interlocked.Increment(ref _generation);
             Dispatcher.BeginInvoke(new Action(StopOnEnter),DispatcherPriority.Send);
         };
+        Native.ParsecShortcutPressed=()=>Dispatcher.BeginInvoke(new Action(async()=>await Toggle()),DispatcherPriority.Input);
         Native.UserEdited=()=> {
             if(_target is {Owned:true} && (_recording||_stopping||_canRestoreRaw))
                 _target.Detach("Modification manuelle : insertion suspendue.");
@@ -150,7 +151,7 @@ public partial class MainWindow : Window
     }
     void SetStatus(string text,bool error=false)
     {
-        StatusText.Text=Ui.Text(text);
+        StatusText.Text=Ui.Text(text);StatusText.ToolTip=StatusText.Text;
         StatusText.Foreground=new SolidColorBrush(error?Color.FromRgb(251,146,146):Colors.White);
     }
     static string Join(string a,string b) => string.IsNullOrWhiteSpace(a)?b.Trim():
@@ -181,17 +182,28 @@ public partial class MainWindow : Window
             lock(_audioLock) {
                 if(!_speech || _chunk.Length<24000)return;
                 final=(DateTime.UtcNow-_lastSpeech).TotalMilliseconds>850 || _chunk.Length>=640000;
+                if(!final && _target is {IsParsec:true})return; // No remote preview, so decode only finished phrases.
                 audio=_chunk.ToArray();
                 if(final) {_chunk.SetLength(0);_speech=false;}
             }
             int generation=_generation;
             string text=await _engine.Transcribe(audio,_committed,_session.Token);
             if(generation!=_generation)return;
+            if(_target is {IsParsec:true}) {
+                // A remote video surface cannot acknowledge or safely revise provisional words.
+                if(!final) {SetStatus("Parsec : ecoute, phrases finalisees");return;}
+                if(!_interactionTest && _settings.cleanupEnabled && !string.IsNullOrWhiteSpace(text)) {
+                    SetStatus("Parsec : nettoyage avant insertion");
+                    var cleaned=await _engine.Cleanup(text,_session.Token);
+                    if(generation!=_generation)return;
+                    text=cleaned.text;
+                }
+            }
             if(final)_committed=Join(_committed,text);
             _raw=final?_committed:Join(_committed,text);
             await ShowTranscript(_raw);
             if(generation!=_generation)return;
-            if(_recording)SetStatus(_target is {Owned:true}?"Écoute dans le champ actif":(_target?.Reason??"Insertion suspendue"),_target is not {Owned:true});
+            if(_recording)SetStatus(_target is {Owned:true}?(_target.IsParsec?"Parsec : ecoute, phrases finalisees":"Écoute dans le champ actif"):(_target?.Reason??"Insertion suspendue"),_target is not {Owned:true});
         } catch(OperationCanceledException) {}
         catch(Exception ex) {SetStatus(ex.Message,true);}
         finally {_inference.Release();}
@@ -218,7 +230,7 @@ public partial class MainWindow : Window
         if(_recording) {await StopRecording();return;}
         if(!_ready) {ShowBriefly();SetStatus("Les modèles se chargent. Patiente un instant.");return;}
         try {
-            _target=await TextTarget.CaptureAsync();
+            _target=await TextTarget.CaptureAsync(_settings.parsecEnabled,_settings.parsecKeyboardLayout);
             _retargeting=false;
             _session.Cancel();_session=new CancellationTokenSource();
             _dismissedOnEnter=false;
@@ -243,7 +255,7 @@ public partial class MainWindow : Window
             MicButton.Background=new SolidColorBrush(Color.FromRgb(225,71,109));
             MicButton.Content="■";
 
-            SetStatus("Écoute dans le champ actif");
+            SetStatus(_target.IsParsec?"Parsec : ecoute, phrases finalisees":"Écoute dans le champ actif");
             _popupVersion++;Show();_=Dispatcher.BeginInvoke(new Action(PositionNearTarget),DispatcherPriority.Background);
         } catch(Exception ex) {
             _recording=false;
@@ -291,13 +303,20 @@ public partial class MainWindow : Window
             lock(_audioLock) {audio=_chunk.ToArray();speech=_speech;_chunk.SetLength(0);_speech=false;}
             if(speech && audio.Length>=16000) {
                 var text=await _engine.Transcribe(audio,_committed,_session.Token);
+                if(generation!=_generation || _dismissedOnEnter)return;
+                if(_target is {IsParsec:true} && !_interactionTest && _settings.cleanupEnabled && !string.IsNullOrWhiteSpace(text)) {
+                    SetStatus("Parsec : nettoyage avant insertion");
+                    var cleaned=await _engine.Cleanup(text,_session.Token);
+                    if(generation!=_generation || _dismissedOnEnter)return;
+                    text=cleaned.text;
+                }
                 _committed=Join(_committed,text);
             }
             if(generation!=_generation || _dismissedOnEnter)return;
             _raw=_committed;
             await ShowTranscript(_raw);
             if(generation!=_generation || _dismissedOnEnter)return;
-            if(!_interactionTest && _settings.cleanupEnabled && !string.IsNullOrWhiteSpace(_raw)) {
+            if(!_interactionTest && _settings.cleanupEnabled && !string.IsNullOrWhiteSpace(_raw) && _target is not {IsParsec:true}) {
                 SetStatus("Nettoyage intelligent · local");
                 var result=await _engine.Cleanup(_raw,_session.Token);
                 if(generation!=_generation || _dismissedOnEnter)return;
@@ -307,7 +326,7 @@ public partial class MainWindow : Window
                 SetStatus(_target is {Owned:true}?"Terminé":"Insertion suspendue");
             } else {
                 _clean=_raw;
-                SetStatus(string.IsNullOrWhiteSpace(_raw)?"Aucune parole détectée":"Terminé · dictée brute");
+                SetStatus(string.IsNullOrWhiteSpace(_raw)?"Aucune parole détectée":_target is {IsParsec:true}?"Parsec : phrases envoyees":"Terminé · dictée brute");
             }
 
         } catch(OperationCanceledException) {}
@@ -366,12 +385,12 @@ public partial class MainWindow : Window
         await Task.Delay(200); // After button release; the second click supersedes the first.
         if(version!=_clickVersion || !_recording || _stopping || !Native.MouseReleased())return;
         try {
-            var target=await TextTarget.CaptureAsync();
+            var target=await TextTarget.CaptureAsync(_settings.parsecEnabled,_settings.parsecKeyboardLayout);
             if(version!=_clickVersion || !_recording || _stopping)return;
             _target=target;
             _retargeting=false;
             PositionNearTarget();
-            SetStatus("Ecoute dans le champ actif");
+            SetStatus(target.IsParsec?"Parsec : ecoute, phrases finalisees":"Ecoute dans le champ actif");
         } catch(Exception ex) {
             if(version==_clickVersion) {_retargeting=false;SetStatus(ex.Message,true);}
         }
@@ -385,6 +404,7 @@ public partial class MainWindow : Window
     void RefreshLanguage()
     {
         Ui.Language=_settings.interfaceLanguage=="fr"?"fr":"en";
+        Native.ParsecModeEnabled=_settings.parsecEnabled;
         Title=Ui.Text("Dict\u00e9e locale");
         ShortcutText.Text=Ui.HotkeyLabel+" \u00b7 100 % local";
         MicButton.ToolTip=Ui.Text("D\u00e9marrer / arr\u00eater");
@@ -415,9 +435,18 @@ public partial class MainWindow : Window
         mic.SelectedIndex=Math.Clamp(_settings.microphoneIndex+1,0,mic.Items.Count-1);panel.Children.Add(mic);
         var clean=new CheckBox {Content=Ui.Text("Nettoyer h\u00e9sitations et corrections orales \u00e0 l'arr\u00eat"),IsChecked=_settings.cleanupEnabled,Margin=new Thickness(0,0,0,14)};
         panel.Children.Add(clean);
+        var parsec=new CheckBox {Name="ParsecMode",Content=Ui.Text("Activer le mode Parsec (experimental)"),IsChecked=_settings.parsecEnabled,Margin=new Thickness(0,0,0,8)};
+        panel.Children.Add(parsec);
+        panel.Children.Add(new TextBlock {Text=Ui.Text("Parsec : phrases terminees uniquement. Clique dans le champ distant. Les mots envoyes ne peuvent pas etre corriges automatiquement."),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,10),Foreground=Brushes.DimGray});
+        panel.Children.Add(new TextBlock {Text=Ui.Text("Clavier du PC distant"),FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,8)});
+        var remoteLayout=new ComboBox {Name="ParsecKeyboardLayout",Margin=new Thickness(0,0,0,14)};
+        remoteLayout.Items.Add(Ui.Text("Identique au clavier local"));
+        remoteLayout.Items.Add("Fran\u00e7ais (AZERTY)");remoteLayout.Items.Add("English (US)");
+        remoteLayout.SelectedIndex=_settings.parsecKeyboardLayout=="fr"?1:_settings.parsecKeyboardLayout=="en"?2:0;
+        panel.Children.Add(remoteLayout);
         var save=new Button {Name="SaveSettings",Content=Ui.Text("Enregistrer"),Padding=new Thickness(14,8,14,8),Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromRgb(99,102,241))};
         panel.Children.Add(save);
-        var dialog=new Window {Title=Ui.Text("R\u00e9glages \u00b7 Dict\u00e9e locale"),Content=panel,Width=460,SizeToContent=SizeToContent.Height,
+        var dialog=new Window {Title=Ui.Text("R\u00e9glages \u00b7 Dict\u00e9e locale"),Content=new ScrollViewer {Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto},Width=480,MaxHeight=SystemParameters.WorkArea.Height-50,SizeToContent=SizeToContent.Height,
             Icon=Icon,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterScreen,ShowActivated=true,Topmost=true};
         _settingsWindow=dialog;
         dialog.Closed+=(_,_)=>_settingsWindow=null;
@@ -428,6 +457,8 @@ public partial class MainWindow : Window
                 if(!_hotkeyRegistered) {MessageBox.Show(dialog,Ui.Text("Ce raccourci est d\u00e9j\u00e0 utilis\u00e9. Choisis-en un autre."));return;}
                 _settings.microphoneIndex=mic.SelectedIndex-1;_settings.cleanupEnabled=clean.IsChecked==true;
                 _settings.interfaceLanguage=language.SelectedIndex==1?"fr":"en";
+                _settings.parsecEnabled=parsec.IsChecked==true;
+                _settings.parsecKeyboardLayout=remoteLayout.SelectedIndex==1?"fr":remoteLayout.SelectedIndex==2?"en":"local";
                 _settings.Save();RefreshLanguage();
                 _tray?.Dispose();_trayIcon?.Dispose();SetupTray();
                 dialog.Close();
@@ -561,26 +592,74 @@ public partial class MainWindow : Window
             var gear=SettingsButton.PointToScreen(new Point(SettingsButton.ActualWidth/2,SettingsButton.ActualHeight/2));
             Native.ClickAt((int)gear.X,(int)gear.Y);await Task.Delay(300);
             Check(!_recording && _settingsWindow is {IsVisible:true} && second.Text==beforeSettings,"gear-opens-settings-during-dictation-with-text-preserved");
-            var settingsPanel=(StackPanel)_settingsWindow!.Content;
+            var settingsPanel=(StackPanel)((ScrollViewer)_settingsWindow!.Content).Content;
             var language=settingsPanel.Children.OfType<ComboBox>().Single(c=>c.Name=="InterfaceLanguage");
             language.SelectedIndex=0;
             settingsPanel.Children.OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(Ui.Language=="en" && Settings.Load().interfaceLanguage=="en" && MicButton.ToolTip as string=="Start / stop","english-interface-applies-and-persists");
             Check(_tray!.ContextMenuStrip!.Items.OfType<Forms.ToolStripMenuItem>().Any(i=>i.Text=="Quit completely"),"english-tray-translated");
             OpenSettings();
-            settingsPanel=(StackPanel)_settingsWindow!.Content;
+            settingsPanel=(StackPanel)((ScrollViewer)_settingsWindow!.Content).Content;
             Check(settingsPanel.Children.OfType<ComboBox>().Single(c=>c.Name=="MicrophoneChoice").Items[0] as string=="Windows default microphone","english-settings-translated");
             settingsPanel.Children.OfType<ComboBox>().Single(c=>c.Name=="InterfaceLanguage").SelectedIndex=1;
             settingsPanel.Children.OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check(Ui.Language=="fr" && MicButton.ToolTip as string=="D\u00e9marrer / arr\u00eater","french-interface-restored-without-restart");
+            Native.ActivateTestWindow(new WindowInteropHelper(editor).Handle);second.Focus();second.Text="Avant mauvais apres";second.Select(6,7);await Task.Delay(150);
+            var remote=TextTarget.CaptureRemoteForTest();
+            _target=remote;_recording=true;_committed=_raw=_display="";
+            lock(_audioLock) {_chunk.SetLength(0);_chunk.Write(new byte[24000]);_speech=true;_lastSpeech=DateTime.UtcNow;}
+            Tick(null,EventArgs.Empty);await Task.Delay(100);
+            Check(second.Text=="Avant mauvais apres" && _display=="" && remote.Owned,"parsec-does-not-decode-or-insert-unfinished-preview");
+            _recording=false;lock(_audioLock){_chunk.SetLength(0);_speech=false;}
+            Check(await remote.UpdateAsync("correct") && second.Text=="Avant correct apres","parsec-keyboard-replaces-selection-without-backspace");
+            Check(await remote.UpdateAsync("correct and run the tests") && second.Text=="Avant correct and run the tests apres","parsec-append-only-continuation");
+            Check(await remote.UpdateAsync("correct and run the tests? Yes!") && second.Text=="Avant correct and run the tests? Yes! apres","parsec-uppercase-and-punctuation-keyboard-input");
+            var frenchPlan=Native.BuildParsecStrokes("éèàç ?",Native.ParsecKeyboardLayout("fr"));
+            Check(frenchPlan.Count==6,"parsec-french-azerty-characters-supported");
+            string preserved=second.Text;
+            Check(!await remote.UpdateAsync("rewrite existing text") && second.Text==preserved,"parsec-never-rewrites-sent-text");
+            remote=TextTarget.CaptureRemoteForTest();
+            bool unsupported=false;
+            try {await remote.UpdateAsync("prefix \ud83d\ude42");}catch(InvalidOperationException){unsupported=true;}
+            Check(unsupported && second.Text==preserved,"parsec-preflights-unsupported-characters-before-insertion");
+            remote=TextTarget.CaptureRemoteForTest();
+            string slow=new string('x',80);
+            var interrupted=remote.UpdateAsync(slow);await Task.Delay(100);remote.Detach("test interrupt");
+            await interrupted;int interruptedLength=second.Text.Length;await Task.Delay(200);
+            Check(second.Text.Length==interruptedLength && interruptedLength<preserved.Length+slow.Length,"parsec-stops-injection-immediately-when-detached");
+            Native.ParsecModeEnabled=true;Native.SetParsecWindowForTest(new WindowInteropHelper(editor).Handle);
+            int shortcutEvents=0;
+            var actualShortcut=Native.ParsecShortcutPressed;
+            Native.ParsecShortcutPressed=()=>shortcutEvents++;
+            second.Text="";second.Focus();Native.PressShortcutInTest();await Task.Delay(150);
+            Native.ParsecShortcutPressed=actualShortcut;Native.SetParsecWindowForTest(IntPtr.Zero);
+            Check(shortcutEvents==1 && second.Text=="","parsec-shortcut-handled-once-without-forwarding-D");
+
 
         } catch(Exception ex) {results.Add(new {test="exception",passed=false,error=ex.ToString()});}
         finally {
+            Native.SetParsecWindowForTest(IntPtr.Zero);
             _settings.interfaceLanguage=originalLanguage;_settings.Save();
             Forms.Cursor.Position=originalMouse;
             File.WriteAllText(Path.Combine(Paths.Root,"test-results","interaction.json"),System.Text.Json.JsonSerializer.Serialize(results,new System.Text.Json.JsonSerializerOptions {WriteIndented=true}));
             editor.Close();Quit();
         }
+    }
+    public async Task ParsecProbe()
+    {
+        var results=new List<object>();
+        try {
+            var handle=Native.FindParsecWindow();
+            results.Add(new {test="actual-parsec-window-detected",passed=handle!=IntPtr.Zero});
+            if(handle!=IntPtr.Zero) {
+                var target=await Task.Run(()=>TextTarget.CaptureParsecMetadataForProbe(handle,_settings.parsecKeyboardLayout)).WaitAsync(TimeSpan.FromSeconds(2));
+                results.Add(new {test="opaque-parsec-window-accepted-without-injection",passed=target.IsParsec && !target.Owned});
+                var strokes=Native.BuildParsecStrokes("Je vais push la branche and then run the tests.",Native.ParsecKeyboardLayout(_settings.parsecKeyboardLayout));
+                results.Add(new {test="remote-typing-plan-without-injection",passed=strokes.Count>0});
+            }
+        } catch(Exception ex) {results.Add(new {test="exception",passed=false,error=ex.ToString()});}
+        File.WriteAllText(Path.Combine(Paths.Root,"test-results","parsec-probe.json"),System.Text.Json.JsonSerializer.Serialize(results,new System.Text.Json.JsonSerializerOptions {WriteIndented=true}));
+        Quit();
     }
     async Task SmokeTest()
     {

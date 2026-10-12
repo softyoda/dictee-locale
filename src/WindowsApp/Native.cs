@@ -47,6 +47,106 @@ public static class Native
         SetCursorPos(x,y);
         Submit(new List<INPUT> {new INPUT {Type=0,Data=new INPUTUNION {Mouse=new MOUSEINPUT {Flags=4}}}});
     }
+    [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint thread);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr LoadKeyboardLayout(string name,uint flags);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern short VkKeyScanEx(char character,IntPtr layout);
+    [DllImport("user32.dll")] static extern uint MapVirtualKeyEx(uint code,uint mapType,IntPtr layout);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd,System.Text.StringBuilder name,int max);
+    static readonly UIntPtr DictationMarker=new(0xD1C7EE);
+    public static bool ParsecModeEnabled;
+    public static Action? ParsecShortcutPressed;
+    static bool _parsecShortcutHeld;
+    static IntPtr _parsecTestWindow;
+    public static void SetParsecWindowForTest(IntPtr hwnd)
+    {
+        if(hwnd!=IntPtr.Zero) {
+            GetWindowThreadProcessId(hwnd,out uint process);
+            if(process!=(uint)Environment.ProcessId)throw new InvalidOperationException("Test window must belong to this process.");
+        }
+        _parsecTestWindow=hwnd;
+    }
+    public static bool IsParsecWindow(IntPtr hwnd)
+    {
+        if(hwnd==IntPtr.Zero)return false;
+        if(hwnd==_parsecTestWindow)return true;
+        var name=new System.Text.StringBuilder(64);GetClassName(hwnd,name,name.Capacity);
+        if(name.ToString()!="MTY_Window")return false;
+        GetWindowThreadProcessId(hwnd,out uint process);
+        try {using var app=System.Diagnostics.Process.GetProcessById((int)process);return app.ProcessName.Equals("parsecd",StringComparison.OrdinalIgnoreCase);}
+        catch {return false;}
+    }
+    delegate bool EnumWindowProc(IntPtr hwnd,IntPtr parameter);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr parameter);
+    [DllImport("user32.dll")] static extern short GetKeyState(int key);
+    public static IntPtr FindParsecWindow()
+    {
+        IntPtr found=IntPtr.Zero;
+        EnumWindows((hwnd,_)=> {if(IsParsecWindow(hwnd)){found=hwnd;return false;}return true;},IntPtr.Zero);
+        return found;
+    }
+    public static IntPtr ParsecKeyboardLayout(string choice)
+    {
+        if(choice=="fr" || choice=="en") {
+            var layout=LoadKeyboardLayout(choice=="fr"?"0000040c":"00000409",0x80);
+            if(layout==IntPtr.Zero)throw new InvalidOperationException("Disposition de clavier indisponible.");
+            return layout;
+        }
+        return GetKeyboardLayout(GetWindowThreadProcessId(GetForegroundWindow(),out _));
+    }
+    public readonly record struct ParsecStroke(ushort Key,int Modifiers);
+    public static List<ParsecStroke> BuildParsecStrokes(string text,IntPtr layout)
+    {
+        var strokes=new List<ParsecStroke>();
+        foreach(char character in text) {
+            if(char.IsControl(character) || char.IsSurrogate(character))throw new InvalidOperationException("Parsec : caractere non pris en charge par le clavier distant.");
+            short mapping=VkKeyScanEx(character,layout);
+            if(mapping==-1 || ((mapping>>8)&255)>7)throw new InvalidOperationException("Parsec : caractere non pris en charge par le clavier distant.");
+            ushort key=(ushort)(mapping&255);
+            int modifiers=(mapping>>8)&7;
+            if(key>=65 && key<=90 && (GetKeyState(20)&1)!=0)modifiers^=1;
+            strokes.Add(new ParsecStroke(key,modifiers));
+        }
+        return strokes;
+    }
+    static INPUT ScanKey(ushort key,bool up,IntPtr layout)
+    {
+        uint scan=MapVirtualKeyEx(key,4,layout);
+        if(scan==0)throw new InvalidOperationException("Parsec : touche non prise en charge.");
+        return new INPUT {Type=1,Data=new INPUTUNION {Keyboard=new KEYBDINPUT {
+            Scan=(ushort)(scan&255),Flags=8u|(up?2u:0u)|((scan&0xff00)!=0?1u:0u),Extra=DictationMarker}}};
+    }
+    public static async Task SendParsecTextAsync(string text,IntPtr layout,Func<bool> owns,Action<char> inserted)
+    {
+        var strokes=BuildParsecStrokes(text,layout); // Preflight the whole phrase before any input.
+        foreach(var stroke in strokes) { // Include physical scan-code validation in the all-or-nothing preflight.
+            _=ScanKey(stroke.Key,false,layout);
+            if((stroke.Modifiers&1)!=0)_=ScanKey(16,false,layout);
+            if((stroke.Modifiers&2)!=0)_=ScanKey(17,false,layout);
+            if((stroke.Modifiers&4)!=0)_=ScanKey(18,false,layout);
+        }
+        for(int i=0;i<strokes.Count;i++) {
+            if(!owns() || !ModifiersReleased())throw new OperationCanceledException();
+            var stroke=strokes[i];
+            var modifiers=new List<ushort>();
+            if((stroke.Modifiers&2)!=0)modifiers.Add(17);
+            if((stroke.Modifiers&4)!=0)modifiers.Add(18);
+            if((stroke.Modifiers&1)!=0)modifiers.Add(16);
+            try {
+                var down=new List<INPUT>();
+                foreach(var modifier in modifiers)down.Add(ScanKey(modifier,false,layout));
+                down.Add(ScanKey(stroke.Key,false,layout));Submit(down);
+                await Task.Delay(8);
+            } finally {
+                var up=new List<INPUT> {ScanKey(stroke.Key,true,layout)};
+                for(int m=modifiers.Count-1;m>=0;m--)up.Add(ScanKey(modifiers[m],true,layout));
+                Submit(up);
+            }
+            inserted(text[i]);
+            await Task.Delay(4);
+        }
+    }
+    public static void PressShortcutInTest()=>Submit(new List<INPUT> {
+        Key(17),Key(16),Key(18),Key((ushort)HotkeyKey),Key((ushort)HotkeyKey),Key((ushort)HotkeyKey,2),Key(18,2),Key(16,2),Key(17,2)});
     delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
     static HookProc? _keyboardProc, _mouseProc;
     static IntPtr _keyboardHook, _mouseHook;
@@ -74,10 +174,24 @@ public static class Native
     public static void StartHooks()
     {
         _keyboardProc = (code, w, l) => {
+            if(code>=0) {
+                var data=Marshal.PtrToStructure<KBD>(l);
+                bool down=w.ToInt64() is 0x100 or 0x104;
+                bool up=w.ToInt64() is 0x101 or 0x105;
+                if(data.Key==HotkeyKey && data.Extra!=DictationMarker) {
+                    if(up && _parsecShortcutHeld) {_parsecShortcutHeld=false;return new IntPtr(1);}
+                    if(down && (_parsecShortcutHeld || (ParsecModeEnabled && IsParsecWindow(GetForegroundWindow()) &&
+                        (GetAsyncKeyState(16)&0x8000)!=0 && (GetAsyncKeyState(17)&0x8000)!=0 && (GetAsyncKeyState(18)&0x8000)!=0))) {
+                        if(!_parsecShortcutHeld) {_parsecShortcutHeld=true;ParsecShortcutPressed?.Invoke();}
+                        return new IntPtr(1); // Handle locally; do not forward this D to the remote host.
+                    }
+                }
+            }
             if (code >= 0 && (w.ToInt64() == 0x100 || w.ToInt64() == 0x104)) {
                 var data = Marshal.PtrToStructure<KBD>(l);
                 if(data.Key==13 && (GetAsyncKeyState(16)&0x8000)==0)EnterPressed?.Invoke();
-                else if ((data.Flags & 0x10) == 0 && data.Key != HotkeyKey &&
+                else if ((data.Flags & 0x10) == 0 && (data.Key != HotkeyKey ||
+                    (GetAsyncKeyState(16)&0x8000)==0 || (GetAsyncKeyState(17)&0x8000)==0 || (GetAsyncKeyState(18)&0x8000)==0) &&
                     data.Key is not (16 or 17 or 18 or 91 or 92 or 160 or 161 or 162 or 163 or 164 or 165))
                 { UserEdited?.Invoke(); }
             }
@@ -159,6 +273,8 @@ public static class Native
 
 public sealed class TextTarget
 {
+    public bool IsParsec {get;}
+    readonly IntPtr _parsecLayout;
     readonly AutomationElement _element;
     readonly IntPtr _window;
     readonly int[] _runtime;
@@ -174,9 +290,18 @@ public sealed class TextTarget
     public string Inserted { get; private set; } = "";
     public string? Reason { get; private set; }
 
-    private TextTarget(AutomationElement element)
+    private TextTarget(AutomationElement element,bool allowParsec=false,string layout="local",bool remoteTest=false,IntPtr? probeWindow=null)
     {
-        _element=element; _runtime=element.GetRuntimeId(); _window=Native.GetForegroundWindow();
+        _element=element; _runtime=element.GetRuntimeId(); _window=probeWindow??Native.GetForegroundWindow();
+        bool parsec=Native.IsParsecWindow(_window);
+        if(parsec && !allowParsec)throw new InvalidOperationException("Parsec : active le mode Parsec dans les reglages.");
+        if((parsec && allowParsec) || remoteTest) {
+            if(remoteTest && element.Current.ProcessId!=Environment.ProcessId)throw new InvalidOperationException("Remote tests require an owned test editor.");
+            IsParsec=true;_parsecLayout=Native.ParsecKeyboardLayout(layout);
+            var point=System.Windows.Forms.Cursor.Position;
+            _field=new System.Windows.Rect(point.X,point.Y,1,1);
+            return;
+        }
         if(element.Current.IsPassword) throw new InvalidOperationException("La dictée n'est pas activée dans un mot de passe.");
         if(!element.Current.IsKeyboardFocusable) throw new InvalidOperationException("Place le curseur dans un champ de texte.");
         if(element.TryGetCurrentPattern(ValuePattern.Pattern,out var vp) && ((ValuePattern)vp).Current.IsReadOnly)
@@ -194,11 +319,19 @@ public sealed class TextTarget
         if(_selectionLength>0 && (ReadCaretOffset() is null || _expectedValue is null))
             throw new InvalidOperationException("La selection de ce champ n'est pas accessible.");
     }
-    public static TextTarget Capture() => new TextTarget(AutomationElement.FocusedElement ??
-        throw new InvalidOperationException("Aucun champ actif."));
-    public static async Task<TextTarget> CaptureAsync()
+    public static TextTarget Capture(bool allowParsec=false,string layout="local") => new TextTarget(AutomationElement.FocusedElement ??
+        throw new InvalidOperationException("Aucun champ actif."),allowParsec,layout);
+    public static TextTarget CaptureRemoteForTest() => new TextTarget(AutomationElement.FocusedElement!,true,"local",true);
+    public static TextTarget CaptureParsecMetadataForProbe(IntPtr hwnd,string layout)
     {
-        try {return await Task.Run(Capture).WaitAsync(TimeSpan.FromSeconds(2));}
+        if(!Native.IsParsecWindow(hwnd))throw new InvalidOperationException("Expected a Parsec window.");
+        var target=new TextTarget(AutomationElement.FromHandle(hwnd),true,layout,false,hwnd);
+        target.Detach("Diagnostic only; never inject.");
+        return target;
+    }
+    public static async Task<TextTarget> CaptureAsync(bool allowParsec=false,string layout="local")
+    {
+        try {return await Task.Run(()=>Capture(allowParsec,layout)).WaitAsync(TimeSpan.FromSeconds(2));}
         catch(TimeoutException) {throw new InvalidOperationException("Le champ ne repond pas. Clique dans un autre champ pour reprendre.");}
     }
     int ReadSelectionLength()
@@ -272,6 +405,7 @@ public sealed class TextTarget
                 !System.Linq.Enumerable.SequenceEqual(_runtime,focus.GetRuntimeId())) {
                 Detach("Le champ actif a changé."); return false;
             }
+            if(IsParsec)return true;
             if(_expectedValue is not null && ReadValue()!=_expectedValue) {
                 Detach("Le texte a été modifié : insertion suspendue."); return false;
             }
@@ -287,7 +421,7 @@ public sealed class TextTarget
     public async Task<bool> UpdateAsync(string next)
     {
         if(System.Threading.Interlocked.CompareExchange(ref _updateFlag,1,0)!=0)return false;
-        try {return await Task.Run(()=>UpdateCoreAsync(next)).WaitAsync(TimeSpan.FromSeconds(4));}
+        try {return await Task.Run(()=>UpdateCoreAsync(next)).WaitAsync(TimeSpan.FromSeconds(IsParsec?Math.Min(60,4+next.Length*.025):4));}
         catch(TimeoutException) {Detach("Le champ ne repond pas : clique pour reprendre.");return false;}
         finally {System.Threading.Interlocked.Exchange(ref _updateFlag,0);}
     }
@@ -296,6 +430,18 @@ public sealed class TextTarget
         next=next.Replace("\r"," ").Replace("\n"," ");
         if(!Check()) return false;
         if(!Native.ModifiersReleased()) return false;
+        if(IsParsec) {
+            if(!next.StartsWith(Inserted,StringComparison.Ordinal)) {
+                Detach("Parsec : le texte deja envoye ne peut pas etre revise.");return false;
+            }
+            string remoteSuffix=next.Substring(Inserted.Length);
+            try {
+                await Native.SendParsecTextAsync(remoteSuffix,_parsecLayout,()=>Owned && Native.GetForegroundWindow()==_window,c=>Inserted+=c);
+                return Owned;
+            } catch(OperationCanceledException) {
+                Detach("Parsec : insertion interrompue, clique pour reprendre.");return false;
+            }
+        }
         if(next.Length==0 && Inserted.Length==0)return true;
         if(_selectionLeading.Length>0 && !next.StartsWith(_selectionLeading,StringComparison.Ordinal))next=_selectionLeading+next;
         if(_selectionTrailing.Length>0 && !next.EndsWith(_selectionTrailing,StringComparison.Ordinal))next+=_selectionTrailing;

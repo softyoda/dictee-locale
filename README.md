@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
   <img src="src/WindowsApp/Assets/dictee.png" width="88" alt="Local Dictation microphone icon">
   <h1>Local Dictation</h1>
   <p>Speak into any compatible Windows text field. Keep your voice on your computer.</p>
@@ -12,6 +12,7 @@ A small Windows dictation toolbar with live text insertion, French/English code-
 - Select one or more words to replace them with your next dictation.
 - Remove fillers and apply explicit spoken corrections when you stop.
 - English or French interface, with a working settings window.
+- Optional Parsec compatibility mode: finished phrases typed into a remote session, with models kept on the client.
 - Optional startup at Windows sign-in and a tray menu to quit completely.
 - Offline inference after installation. No cloud account or API key.
 
@@ -72,6 +73,10 @@ In **Settings**, select the interface language (**English** / **Français**), mi
 Right-click the microphone icon to enable/disable **Start with Windows**, open settings or retry registration of the hotkey. Startup is **off by default**. The keyboard shortcut only works while the app is running. You can bind that combination to a keyboard macro.
 
 Manual typing or keyboard cursor changes pause insertion to protect your edits. Click where you want dictation to resume. Unsupported or unresponsive editors pause insertion; click a compatible field to recover without restarting. Password and read-only fields are refused. The toolbar never sends Enter on your behalf.
+
+### Parsec remote sessions
+
+Enable **Parsec mode (experimental)** in Settings to keep models and the microphone on this PC, with a single local toolbar. Select the remote keyboard layout, click the remote text field and dictate. Finished phrases are cleaned before typing; provisional words and already-sent text are never revised. Pause to see the phrase, or stop with the shortcut before pressing Enter. The remote editor cannot be inspected or acknowledged. See [Parsec setup and limitations](docs/parsec.md).
 
 ### Smart cleanup
 

@@ -1,4 +1,4 @@
-﻿{
+{
   "Dictée locale": "Local Dictation",
   "Dictée locale · ": "Local Dictation · ",
   "Réglages · Dictée locale": "Settings · Local Dictation",
@@ -66,5 +66,18 @@
   "Python local introuvable. Lance setup.ps1.": "Local Python is missing. Run Install.cmd.",
   "Le moteur n'a pas démarré.": "The inference engine did not start.",
   "Erreur du moteur local.": "Local inference error.",
-  "La dictée locale est déjà lancée (icône dans la zone de notification).": "Local Dictation is already running (see its tray icon)."
+  "La dictée locale est déjà lancée (icône dans la zone de notification).": "Local Dictation is already running (see its tray icon).",
+  "Activer le mode Parsec (experimental)": "Enable Parsec mode (experimental)",
+  "Parsec : phrases terminees uniquement. Clique dans le champ distant. Les mots envoyes ne peuvent pas etre corriges automatiquement.": "Parsec: finished phrases only. Click the remote text field first. Sent words cannot be revised automatically.",
+  "Clavier du PC distant": "Remote computer keyboard",
+  "Identique au clavier local": "Same as local keyboard",
+  "Parsec : active le mode Parsec dans les reglages.": "Parsec: enable Parsec mode in Settings.",
+  "Parsec : caractere non pris en charge par le clavier distant.": "Parsec: a character is unavailable on the selected remote keyboard.",
+  "Parsec : touche non prise en charge.": "Parsec: unsupported key.",
+  "Disposition de clavier indisponible.": "Keyboard layout unavailable.",
+  "Parsec : le texte deja envoye ne peut pas etre revise.": "Parsec: sent text cannot be revised.",
+  "Parsec : insertion interrompue, clique pour reprendre.": "Parsec: insertion interrupted; click to resume.",
+  "Parsec : ecoute, phrases finalisees": "Parsec: listening, finished phrases",
+  "Parsec : nettoyage avant insertion": "Parsec: cleanup before insertion",
+  "Parsec : phrases envoyees": "Parsec: phrases sent"
 }

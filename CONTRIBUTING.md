@@ -1,4 +1,4 @@
-﻿# Contributing
+# Contributing
 
 Issues and pull requests are welcome. Describe the Windows version, GPU, target editor and exact reproduction steps. Use a synthetic sentence; do not upload private dictations or recordings.
 
@@ -43,3 +43,6 @@ git push origin main
 ```
 
 For outside contributors, push to your fork and open a pull request. Maintainers can use `scripts/Build-Release.ps1 -Version 0.1.0` to build a self-contained Windows ZIP with SHA-256 checksums. Release archives contain binaries and installer files, not weights, environments or local settings. A tag matching `v*` runs the release workflow.
+
+
+Parsec changes: `--interaction-test` also verifies scan-code selection replacement, punctuation/case, no provisional preview, unsupported-character preflight, no remote rewrites, interruption, and local shortcut suppression. With Parsec running, `--parsec-probe` verifies detection and opaque-window metadata without typing. Client-to-host transport needs a manual check in a disposable remote editor. Never use a user's conversation as the automated test target.

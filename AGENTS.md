@@ -1,4 +1,4 @@
-﻿# Agent instructions
+# Agent instructions
 
 ## Purpose
 
@@ -26,3 +26,12 @@ Quit the running app before rebuilding or GPU tests. Use `dotnet publish src/Win
 Run appropriate checks from CONTRIBUTING. UI tests use dedicated editors with exclusive Windows focus; they must not insert into a user's chat. Smoke tests leave the app running with the microphone off. Do not load two copies of the models on GPU. Test reports, screenshots outside docs, local settings and environments are ignored.
 
 Use UTF-8 for PowerShell file reads/writes. Avoid non-ASCII literal text piped through Python stdin in Windows PowerShell; write a UTF-8 file or use Unicode escapes. Check resolved targets before any recursive cleanup; do not clean the installation root.
+
+
+## Approved Parsec mode
+
+The user explicitly requested a client-side Parsec mode: keep models/microphone here, no remote installation/mic or second popup. In this opt-in mode only, bypass local UIA field checks for a positively identified parsecd/MTY_Window streaming window. The remote field/caret/selection/password state cannot be inspected; do not claim those protections apply remotely. Never add an unguarded fallback for arbitrary unsupported apps.
+
+Only finalized phrases are transcribed/cleaned, then appended via physical keyboard scan codes matching the selected remote layout. Never backspace or rewrite remote text, paste via clipboard, restore raw remote text, inject Enter or resend a partially typed phrase. Validate every character/scan code before sending any input; check Owned/foreground between characters and always release simulated modifiers. Stop immediately when detached; partial insertion cannot be rolled back. Keep cleanup before insertion, and generation/token guards after every await. Enter discards pending audio. Local editor behavior is unchanged.
+
+Native keyboard hook handles Ctrl+Shift+Alt+D locally for Parsec, suppresses D down/up and repeats, and marks its own scan-code events to avoid mistaking dictated input for a shortcut. Tests use an owned editor; the passive Parsec probe never injects. Document that real client-to-host delivery remains a manual verification. Fresh installations default to disabled; the maintainer explicitly enabled this mode locally.
