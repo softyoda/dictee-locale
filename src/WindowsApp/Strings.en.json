@@ -79,5 +79,6 @@
   "Parsec : insertion interrompue, clique pour reprendre.": "Parsec: insertion interrupted; click to resume.",
   "Parsec : ecoute, phrases finalisees": "Parsec: listening, finished phrases",
   "Parsec : nettoyage avant insertion": "Parsec: cleanup before insertion",
-  "Parsec : phrases envoyees": "Parsec: phrases sent"
+  "Parsec : phrases envoyees": "Parsec: phrases sent",
+  "Le texte au curseur ne correspond plus a la dictee.": "Text at the cursor no longer matches the dictation."
 }

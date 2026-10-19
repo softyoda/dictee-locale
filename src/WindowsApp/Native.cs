@@ -275,6 +275,7 @@ public sealed class TextTarget
 {
     public bool IsParsec {get;}
     readonly IntPtr _parsecLayout;
+    readonly bool _useTextPattern,_richText;
     readonly AutomationElement _element;
     readonly IntPtr _window;
     readonly int[] _runtime;
@@ -308,6 +309,12 @@ public sealed class TextTarget
             throw new InvalidOperationException("Ce champ est en lecture seule.");
         if(!element.TryGetCurrentPattern(ValuePattern.Pattern,out _) && !element.TryGetCurrentPattern(TextPattern.Pattern,out _))
             throw new InvalidOperationException("Place le curseur dans un champ de texte accessible.");
+        bool hasText=element.TryGetCurrentPattern(TextPattern.Pattern,out _);
+        // Keep rich-editor reads and caret offsets in the same provider coordinate system.
+        // Ordinary native/WPF textboxes retain their existing ValuePattern behavior.
+        _richText=hasText && (element.Current.FrameworkId=="Chrome" ||
+            element.Current.ClassName.StartsWith("ql-editor",StringComparison.Ordinal));
+        _useTextPattern=_richText || (hasText && !element.TryGetCurrentPattern(ValuePattern.Pattern,out _));
         CaptureState();
         _field=element.Current.BoundingRectangle;
         _selectionLength=ReadSelectionLength();
@@ -356,8 +363,11 @@ public sealed class TextTarget
     string? ReadValue()
     {
         try {
+            if(_useTextPattern) {
+                if(_element.TryGetCurrentPattern(TextPattern.Pattern,out var tp))return Normalize(((TextPattern)tp).DocumentRange.GetText(500000));
+                return null; // Do not switch coordinate systems if a provider disappears.
+            }
             if(_element.TryGetCurrentPattern(ValuePattern.Pattern,out var vp)) return Normalize(((ValuePattern)vp).Current.Value);
-            if(_element.TryGetCurrentPattern(TextPattern.Pattern,out var tp)) return Normalize(((TextPattern)tp).DocumentRange.GetText(500000));
         } catch {}
         return null;
     }
@@ -372,7 +382,8 @@ public sealed class TextTarget
         return null;
     }
 
-    static string Normalize(string text)=>text.Replace("\r\n","\n");
+    static string Normalize(string text)=>EditorText.Normalize(text);
+    bool SameDocument(string? first,string? second)=>EditorText.SameDocument(first,second,_richText);
     int? ReadCaretOffset()
     {
         try {
@@ -406,7 +417,7 @@ public sealed class TextTarget
                 Detach("Le champ actif a changé."); return false;
             }
             if(IsParsec)return true;
-            if(_expectedValue is not null && ReadValue()!=_expectedValue) {
+            if(_expectedValue is not null && !SameDocument(ReadValue(),_expectedValue)) {
                 Detach("Le texte a été modifié : insertion suspendue."); return false;
             }
             var caret=ReadCaret();
@@ -427,7 +438,7 @@ public sealed class TextTarget
     }
     async Task<bool> UpdateCoreAsync(string next)
     {
-        next=next.Replace("\r"," ").Replace("\n"," ");
+        next=Normalize(next).Replace("\r"," ").Replace("\n"," ");
         if(!Check()) return false;
         if(!Native.ModifiersReleased()) return false;
         if(IsParsec) {
@@ -457,14 +468,12 @@ public sealed class TextTarget
         }
 
         string suffix=next.Substring(prefix);
-        string? before=ReadValue(),expected=null;
+        string? before=ReadValue();
         int? caretOffset=ReadCaretOffset();
-        if(before is not null && caretOffset is int offset && offset>=oldTail.Length && offset<=before.Length &&
-            before.Substring(offset-oldTail.Length,oldTail.Length)==oldTail)
-            expected=before.Remove(offset-oldTail.Length,oldTail.Length).Insert(offset-oldTail.Length,suffix);
-        if(_selectionLength>0 && before is not null && caretOffset is int start &&
-            start>=0 && start+_selectionLength<=before.Length)
-            expected=before.Remove(start,_selectionLength).Insert(start,suffix);
+        string? expected=EditorText.AfterEdit(before,caretOffset,_selectionLength,oldTail,suffix);
+        if(oldTail.Length>0 && before is not null && caretOffset is not null && expected is null) {
+            Detach("Le texte au curseur ne correspond plus a la dictee.");return false;
+        }
         // Recheck ownership after potentially slow provider calls, immediately before injection.
         if(!FocusMatches() || !Owned || !Native.ModifiersReleased())return false;
         Native.ReplaceSuffix(oldTail.Length,suffix);
@@ -476,7 +485,7 @@ public sealed class TextTarget
             if(!Owned)return false;
             if(!FocusMatches()) {Detach("Le champ actif a change.");return false;}
             var value=ReadValue();
-            bool confirmed=expected is not null?value==expected:
+            bool confirmed=expected is not null?SameDocument(value,expected):
                 before is not null && value is not null && value!=before &&
                 value.Length==before.Length-oldTail.Length-_selectionLength+suffix.Length && value.Contains(next,StringComparison.Ordinal);
             if(!confirmed)continue;

@@ -46,3 +46,6 @@ For outside contributors, push to your fork and open a pull request. Maintainers
 
 
 Parsec changes: `--interaction-test` also verifies scan-code selection replacement, punctuation/case, no provisional preview, unsupported-character preflight, no remote rewrites, interruption, and local shortcut suppression. With Parsec running, `--parsec-probe` verifies detection and opaque-window metadata without typing. Client-to-host transport needs a manual check in a disposable remote editor. Never use a user's conversation as the automated test target.
+
+
+Use `app/DicteeLocale.exe --text-tests` for pure C# document reconciliation checks. This mode creates no windows, installs no hooks, loads no models and skips the instance mutex, so it can run alongside the app without taking focus. It verifies rich-editor NBSP/paragraph-sentinel acknowledgement, continuation, revisions and edit guards. Interactive UI tests require explicit authorization on the maintainer's working desktop.

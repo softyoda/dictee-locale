@@ -13,8 +13,9 @@ public static class SelfTest
         var results=new List<object>();
         var box=new TextBox {Text="Avant | après",Margin=new Thickness(20),FontSize=20};
         var other=new TextBox {Text="Autre champ",Margin=new Thickness(20)};
-        var panel=new StackPanel(); panel.Children.Add(box);panel.Children.Add(other);
-        var window=new Window {Title="Test d'insertion · Dictée locale",Content=panel,Width=500,Height=180,Topmost=true};
+        var rich=new QuillLikeTestBox {Margin=new Thickness(20),FontSize=18,AcceptsReturn=true};
+        var panel=new StackPanel(); panel.Children.Add(box);panel.Children.Add(other);panel.Children.Add(rich);
+        var window=new Window {Title="Test d'insertion · Dictée locale",Content=panel,Width=560,Height=320,Topmost=true};
         try {
             window.Show();Native.ActivateTestWindow(new System.Windows.Interop.WindowInteropHelper(window).Handle);window.Activate();System.Windows.Input.Keyboard.Focus(box);box.CaretIndex=6;
 
@@ -29,7 +30,8 @@ public static class SelfTest
             results.Add(new {test="focus-diagnostic",window=Native.GetForegroundWindow().ToString(),focus=System.Windows.Automation.AutomationElement.FocusedElement.Current.ClassName,hasFocus=box.IsKeyboardFocused,expectedProcess=Environment.ProcessId,actualProcess=System.Windows.Automation.AutomationElement.FocusedElement.Current.ProcessId,expectedWindow=new System.Windows.Interop.WindowInteropHelper(window).Handle.ToString(),visible=window.IsVisible});
             Assert(System.Windows.Automation.AutomationElement.FocusedElement.Current.ProcessId==Environment.ProcessId,"Test window owns keyboard focus",results);
             var target=TextTarget.Capture();
-            await target.UpdateAsync("bonjour");
+            bool firstApplied=await target.UpdateAsync("bonjour");
+            if(!firstApplied || box.Text!="Avant bonjour| apr\u00e8s")results.Add(new {test="first-insertion-diagnostic",firstApplied,text=box.Text,reason=target.Reason});
             Assert(box.Text=="Avant bonjour| après","Insertion au curseur sans modifier le texte voisin",results);
             await target.UpdateAsync("salut");
             Assert(box.Text=="Avant salut| après","Révision limitée au texte dicté",results);
@@ -70,6 +72,19 @@ public static class SelfTest
             selected=await TextTarget.CaptureAsync();
             Assert(await selected.UpdateAsync("") && box.Text=="Avant mauvais apres","Empty recognition leaves selection unchanged",results);
             Assert(await selected.UpdateAsync("correct") && box.Text=="Avant correct apres","Single selected word can be replaced",results);
+            rich.Focus();rich.CaretIndex=0;await Task.Delay(100);
+            var quill=await TextTarget.CaptureAsync();
+            bool confirmed=await quill.UpdateAsync("Tu pourrais");
+            Assert(confirmed && rich.Text=="Tu pourrais" && await Task.Run(quill.Check),"Quill first words acknowledge NBSP and changing paragraph sentinel",results);
+            Assert(await quill.UpdateAsync("Tu pourrais continuer la phrase") && rich.Text=="Tu pourrais continuer la phrase","Quill same dictation continues beyond first words",results);
+            Assert(await quill.UpdateAsync("Pourrais-tu continuer la phrase ?") && rich.Text=="Pourrais-tu continuer la phrase ?","Quill owned revision preserves guarded deletion",results);
+            rich.Text="Introduction\nAvant mauvais apres";rich.Select(19,7);rich.DifferentValueView=true;await Task.Delay(100);
+            quill=await TextTarget.CaptureAsync();
+            Assert(await quill.UpdateAsync("correct") && rich.Text=="Introduction\nAvant correct apres","Quill multiline selection uses the same text provider as caret offsets",results);
+            Assert(await quill.UpdateAsync("correct encore") && rich.Text=="Introduction\nAvant correct encore apres","Quill different ValuePattern view does not break continuation",results);
+            rich.Text="Introduction\nAvant EDIT MANUEL apres";
+            string richEdited=rich.Text;
+            Assert(!await quill.UpdateAsync("interdit") && rich.Text==richEdited,"Quill meaningful manual changes remain protected",results);
             bool newlineRejected=false;
             try {Native.ReplaceSuffix(0,"ne pas envoyer\n");}catch(InvalidOperationException){newlineRejected=true;}
             Assert(newlineRejected,"Aucune touche Entrée injectée",results);

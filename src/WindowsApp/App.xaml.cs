@@ -9,6 +9,9 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if(Array.Exists(e.Args,a=>a=="--text-tests")) {
+            EditorTextSelfTest.Run();Shutdown(Environment.ExitCode);return;
+        }
         Ui.Language=Settings.Load().interfaceLanguage;
         if(Array.Exists(e.Args,a=>a is "--self-test" or "--interaction-test" or "--smoke-test" or "--parsec-probe"))
             Directory.CreateDirectory(Path.Combine(Paths.Root,"test-results"));

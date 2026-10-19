@@ -22,6 +22,11 @@ jobs:
         run: python -m unittest discover -s tests -p test_text.py
       - name: Build Windows application
         run: dotnet build src/WindowsApp/WindowsApp.csproj -c Release
+      - name: Document reconciliation tests (no windows or input)
+        shell: pwsh
+        run: |
+          $test=Start-Process ./src/WindowsApp/bin/Release/net8.0-windows/DicteeLocale.exe -ArgumentList '--text-tests' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw 'Document reconciliation tests failed.' }
       - name: Parse PowerShell scripts
         shell: pwsh
         run: |
